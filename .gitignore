@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+*.egg-info/
+
+# Rust
+target/
+Cargo.lock
+
+# Maturin
+*.whl
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store

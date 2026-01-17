@@ -1,0 +1,23 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "rust_demo"
+version = "0.1.0"
+description = "Demo: Rust extension for Python using PyO3 and Maturin"
+requires-python = ">=3.9"
+
+[project.optional-dependencies]
+dev = ["pytest", "ipython", "ruff"]
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+
+# Tell uv to rebuild when Rust source changes
+[tool.uv]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "**/*.rs" }
+]
