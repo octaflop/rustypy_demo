@@ -1,5 +1,7 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use rayon::prelude::*;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 // ============================================================================
@@ -245,6 +247,287 @@ impl RingBuffer {
 }
 
 // ============================================================================
+// EXAMPLE 6: Parallel Computation (rayon)
+// ============================================================================
+
+/// Sum a list of integers using rayon parallel iterators with GIL released
+#[pyfunction]
+fn parallel_sum(py: Python<'_>, items: Vec<i64>) -> i64 {
+    py.allow_threads(|| items.par_iter().sum())
+}
+
+/// Sieve of Eratosthenes — returns all primes up to n
+#[pyfunction]
+fn prime_sieve(py: Python<'_>, n: usize) -> Vec<usize> {
+    py.allow_threads(|| {
+        if n < 2 {
+            return vec![];
+        }
+        let mut is_prime = vec![true; n + 1];
+        is_prime[0] = false;
+        is_prime[1] = false;
+        let limit = (n as f64).sqrt() as usize;
+        for i in 2..=limit {
+            if is_prime[i] {
+                let mut j = i * i;
+                while j <= n {
+                    is_prime[j] = false;
+                    j += i;
+                }
+            }
+        }
+        is_prime
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &prime)| if prime { Some(i) } else { None })
+            .collect()
+    })
+}
+
+/// Count primes up to n (same sieve, but returns only the count)
+/// Demonstrates boundary-crossing cost: returning a count is much cheaper
+/// than returning 1M items across the Rust→Python boundary.
+#[pyfunction]
+fn count_primes(py: Python<'_>, n: usize) -> usize {
+    py.allow_threads(|| {
+        if n < 2 {
+            return 0;
+        }
+        let mut is_prime = vec![true; n + 1];
+        is_prime[0] = false;
+        is_prime[1] = false;
+        let limit = (n as f64).sqrt() as usize;
+        for i in 2..=limit {
+            if is_prime[i] {
+                let mut j = i * i;
+                while j <= n {
+                    is_prime[j] = false;
+                    j += i;
+                }
+            }
+        }
+        is_prime.iter().filter(|&&p| p).count()
+    })
+}
+
+// ============================================================================
+// EXAMPLE 7: Matrix Multiplication
+// ============================================================================
+
+/// Multiply two matrices stored as flat vectors (row-major order).
+/// Uses cache-friendly i-k-j loop ordering.
+#[pyfunction]
+fn matrix_multiply(
+    py: Python<'_>,
+    a: Vec<f64>,
+    b: Vec<f64>,
+    rows_a: usize,
+    cols_a: usize,
+    cols_b: usize,
+) -> PyResult<Vec<f64>> {
+    if a.len() != rows_a * cols_a {
+        return Err(PyValueError::new_err(format!(
+            "Matrix A size mismatch: expected {} elements, got {}",
+            rows_a * cols_a,
+            a.len()
+        )));
+    }
+    if b.len() != cols_a * cols_b {
+        return Err(PyValueError::new_err(format!(
+            "Matrix B size mismatch: expected {} elements, got {}",
+            cols_a * cols_b,
+            b.len()
+        )));
+    }
+
+    Ok(py.allow_threads(|| {
+        let mut result = vec![0.0; rows_a * cols_b];
+        // Cache-friendly i-k-j ordering
+        for i in 0..rows_a {
+            for k in 0..cols_a {
+                let a_ik = a[i * cols_a + k];
+                for j in 0..cols_b {
+                    result[i * cols_b + j] += a_ik * b[k * cols_b + j];
+                }
+            }
+        }
+        result
+    }))
+}
+
+// ============================================================================
+// EXAMPLE 8: Text Processing
+// ============================================================================
+
+/// Convert arbitrary text to a URL-friendly slug
+#[pyfunction]
+fn slugify(text: &str) -> String {
+    let mut slug = String::with_capacity(text.len());
+    let mut last_was_dash = true; // prevent leading dash
+
+    for ch in text.chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+            last_was_dash = false;
+        } else if !last_was_dash {
+            slug.push('-');
+            last_was_dash = true;
+        }
+    }
+
+    // Remove trailing dash
+    if slug.ends_with('-') {
+        slug.pop();
+    }
+    slug
+}
+
+/// Extract email-like patterns from text via manual character scanning
+#[pyfunction]
+fn extract_emails(text: &str) -> Vec<String> {
+    let mut emails = Vec::new();
+    let chars: Vec<char> = text.chars().collect();
+    let len = chars.len();
+
+    for i in 0..len {
+        if chars[i] == '@' && i > 0 && i < len - 1 {
+            // Scan backwards for local part
+            let mut start = i;
+            while start > 0 {
+                let ch = chars[start - 1];
+                if ch.is_ascii_alphanumeric() || ch == '.' || ch == '_' || ch == '-' || ch == '+' {
+                    start -= 1;
+                } else {
+                    break;
+                }
+            }
+
+            // Scan forwards for domain part
+            let mut end = i + 1;
+            let mut has_dot = false;
+            while end < len {
+                let ch = chars[end];
+                if ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' {
+                    if ch == '.' {
+                        has_dot = true;
+                    }
+                    end += 1;
+                } else {
+                    break;
+                }
+            }
+
+            // Validate: must have local part, domain, and at least one dot in domain
+            if start < i && end > i + 1 && has_dot {
+                let email: String = chars[start..end].iter().collect();
+                // Trim trailing dots
+                let email = email.trim_end_matches('.').to_string();
+                if !emails.contains(&email) {
+                    emails.push(email);
+                }
+            }
+        }
+    }
+    emails
+}
+
+// ============================================================================
+// EXAMPLE 9: SortedSet Class
+// ============================================================================
+
+/// A sorted set backed by a Vec with binary search.
+/// Python has no built-in sorted set — this shows advanced #[pymethods].
+#[pyclass]
+struct SortedSet {
+    data: Vec<i64>,
+}
+
+#[pymethods]
+impl SortedSet {
+    #[new]
+    fn new() -> Self {
+        SortedSet { data: Vec::new() }
+    }
+
+    /// Insert a value. Returns true if it was newly inserted.
+    fn insert(&mut self, value: i64) -> bool {
+        match self.data.binary_search(&value) {
+            Ok(_) => false, // already present
+            Err(pos) => {
+                self.data.insert(pos, value);
+                true
+            }
+        }
+    }
+
+    /// Check if value is in the set.
+    fn contains(&self, value: i64) -> bool {
+        self.data.binary_search(&value).is_ok()
+    }
+
+    /// Remove a value. Returns true if it was present.
+    fn remove(&mut self, value: i64) -> bool {
+        match self.data.binary_search(&value) {
+            Ok(pos) => {
+                self.data.remove(pos);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Return all elements as a sorted list.
+    fn to_list(&self) -> Vec<i64> {
+        self.data.clone()
+    }
+
+    /// Return elements in [low, high] inclusive.
+    fn range(&self, low: i64, high: i64) -> Vec<i64> {
+        let start = match self.data.binary_search(&low) {
+            Ok(pos) => pos,
+            Err(pos) => pos,
+        };
+        let end = match self.data.binary_search(&high) {
+            Ok(pos) => pos + 1,
+            Err(pos) => pos,
+        };
+        self.data[start..end].to_vec()
+    }
+
+    fn __len__(&self) -> usize {
+        self.data.len()
+    }
+
+    fn __contains__(&self, value: i64) -> bool {
+        self.contains(value)
+    }
+
+    fn __repr__(&self) -> String {
+        if self.data.len() <= 10 {
+            format!("SortedSet({:?})", self.data)
+        } else {
+            format!(
+                "SortedSet([{}, ... {} items])",
+                self.data[0],
+                self.data.len()
+            )
+        }
+    }
+}
+
+// ============================================================================
+// EXAMPLE 10: Byte Operations (sha2)
+// ============================================================================
+
+/// Compute the SHA-256 hex digest of a string
+#[pyfunction]
+fn sha256_hex(data: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+// ============================================================================
 // MODULE DEFINITION
 // ============================================================================
 
@@ -261,9 +544,18 @@ fn rust_demo(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(filter_positive, m)?)?;
     m.add_function(wrap_pyfunction!(word_frequencies, m)?)?;
 
+    m.add_function(wrap_pyfunction!(parallel_sum, m)?)?;
+    m.add_function(wrap_pyfunction!(prime_sieve, m)?)?;
+    m.add_function(wrap_pyfunction!(count_primes, m)?)?;
+    m.add_function(wrap_pyfunction!(matrix_multiply, m)?)?;
+    m.add_function(wrap_pyfunction!(slugify, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_emails, m)?)?;
+    m.add_function(wrap_pyfunction!(sha256_hex, m)?)?;
+
     // Add classes
     m.add_class::<MovingAverage>()?;
     m.add_class::<RingBuffer>()?;
+    m.add_class::<SortedSet>()?;
 
     Ok(())
 }

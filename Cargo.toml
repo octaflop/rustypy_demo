@@ -11,3 +11,7 @@ crate-type = ["cdylib"]
 [dependencies.pyo3]
 version = "0.23"
 features = ["extension-module", "abi3-py39"]
+
+[dependencies]
+rayon = "1.10"
+sha2 = "0.10"

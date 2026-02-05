@@ -151,6 +151,181 @@ def main():
     print(f"  Python: {py_sum:>15,} in {py_time * 1000:>8.3f}ms")
     print("  (Python's sum() is C-implemented, so this is a fair fight!)")
 
+    # -------------------------------------------------------------------------
+    # Example 6: Parallel Computation
+    # -------------------------------------------------------------------------
+    print("\n📌 Example 6: Parallel Computation (rayon)")
+    print("-" * 40)
+
+    large_list = list(range(1, 10_000_001))
+
+    # Parallel sum vs Python sum
+    start = time.perf_counter()
+    rust_par_sum = rust_demo.parallel_sum(large_list)
+    rust_par_time = time.perf_counter() - start
+
+    start = time.perf_counter()
+    py_sum_result = sum(large_list)
+    py_sum_time = time.perf_counter() - start
+
+    print("Parallel sum of 10M integers:")
+    print(f"  Rust (rayon): {rust_par_sum:>20,} in {rust_par_time * 1000:>8.3f}ms")
+    print(f"  Python sum(): {py_sum_result:>20,} in {py_sum_time * 1000:>8.3f}ms")
+
+    # Prime sieve
+    prime_n = 1_000_000
+    start = time.perf_counter()
+    primes = rust_demo.prime_sieve(prime_n)
+    rust_sieve_time = time.perf_counter() - start
+
+    def py_prime_sieve(n):
+        sieve = [True] * (n + 1)
+        sieve[0] = sieve[1] = False
+        for i in range(2, int(n**0.5) + 1):
+            if sieve[i]:
+                for j in range(i * i, n + 1, i):
+                    sieve[j] = False
+        return [i for i, is_p in enumerate(sieve) if is_p]
+
+    start = time.perf_counter()
+    py_primes = py_prime_sieve(prime_n)
+    py_sieve_time = time.perf_counter() - start
+
+    print(f"\nPrime sieve up to {prime_n:,}:")
+    print(f"  Rust:   {len(primes):>8,} primes in {rust_sieve_time * 1000:>8.3f}ms")
+    print(f"  Python: {len(py_primes):>8,} primes in {py_sieve_time * 1000:>8.3f}ms")
+    print(f"  Rust is {py_sieve_time / rust_sieve_time:.1f}x faster!")
+
+    # Boundary crossing cost lesson
+    start = time.perf_counter()
+    _primes_vec = rust_demo.prime_sieve(prime_n)
+    sieve_vec_time = time.perf_counter() - start
+
+    start = time.perf_counter()
+    rust_demo.count_primes(prime_n)
+    count_time = time.perf_counter() - start
+
+    print(f"\nBoundary-crossing cost (primes up to {prime_n:,}):")
+    print(
+        f"  prime_sieve (returns {len(primes):,} items): {sieve_vec_time * 1000:>8.3f}ms"
+    )
+    print(f"  count_primes (returns 1 int):       {count_time * 1000:>8.3f}ms")
+    print(f"  Returning the count is {sieve_vec_time / count_time:.1f}x faster!")
+
+    # -------------------------------------------------------------------------
+    # Example 7: Matrix Multiplication
+    # -------------------------------------------------------------------------
+    print("\n📌 Example 7: Matrix Multiplication")
+    print("-" * 40)
+
+    size = 200
+    a = [random.random() for _ in range(size * size)]
+    b = [random.random() for _ in range(size * size)]
+
+    start = time.perf_counter()
+    rust_result = rust_demo.matrix_multiply(a, b, size, size, size)
+    rust_mat_time = time.perf_counter() - start
+
+    def py_matrix_multiply(a, b, n):
+        result = [0.0] * (n * n)
+        for i in range(n):
+            for k in range(n):
+                a_ik = a[i * n + k]
+                for j in range(n):
+                    result[i * n + j] += a_ik * b[k * n + j]
+        return result
+
+    start = time.perf_counter()
+    py_mat_result = py_matrix_multiply(a, b, size)
+    py_mat_time = time.perf_counter() - start
+
+    print(f"{size}x{size} matrix multiply:")
+    print(f"  Rust:   {rust_mat_time * 1000:>10.3f}ms")
+    print(f"  Python: {py_mat_time * 1000:>10.3f}ms")
+    print(f"  Rust is {py_mat_time / rust_mat_time:.1f}x faster!")
+    print(f"  Result[0] match: Rust={rust_result[0]:.6f} Python={py_mat_result[0]:.6f}")
+
+    # -------------------------------------------------------------------------
+    # Example 8: Text Processing
+    # -------------------------------------------------------------------------
+    print("\n📌 Example 8: Text Processing")
+    print("-" * 40)
+
+    test_titles = [
+        "Hello, World! This is a Test.",
+        "Rust + Python = 🎉 Awesome!!!",
+        "  Leading/Trailing Spaces  ",
+        "CamelCase meetup_SLC-2025",
+    ]
+    for title in test_titles:
+        slug = rust_demo.slugify(title)
+        print(f"  slugify({title!r})")
+        print(f"    → {slug!r}")
+
+    email_text = (
+        "Contact us at hello@example.com or support@rust-lang.org. "
+        "Also try user.name+tag@sub.domain.co.uk for fun. "
+        "Not an email: @nobody or broken@"
+    )
+    emails = rust_demo.extract_emails(email_text)
+    print("\nExtracted emails from text:")
+    for email in emails:
+        print(f"  → {email}")
+
+    # -------------------------------------------------------------------------
+    # Example 9: SortedSet
+    # -------------------------------------------------------------------------
+    print("\n📌 Example 9: SortedSet Class")
+    print("-" * 40)
+
+    ss = rust_demo.SortedSet()
+    for val in [50, 20, 80, 10, 60, 30, 90, 40, 70]:
+        inserted = ss.insert(val)
+        print(f"  insert({val}): new={inserted}, len={len(ss)}")
+
+    print(f"\n  Sorted: {ss.to_list()}")
+    print(f"  contains(50): {ss.contains(50)}")
+    print(f"  contains(55): {ss.contains(55)}")
+    print(f"  range(25, 65): {ss.range(25, 65)}")
+
+    # Remove and re-check
+    removed = ss.remove(50)
+    print(f"\n  remove(50): was_present={removed}")
+    print(f"  After removal: {ss.to_list()}")
+    print(f"  {ss}")
+
+    # -------------------------------------------------------------------------
+    # Example 10: SHA-256
+    # -------------------------------------------------------------------------
+    print("\n📌 Example 10: SHA-256 Hashing")
+    print("-" * 40)
+
+    import hashlib
+
+    test_data = "Hello, Rust + Python!"
+    rust_hash = rust_demo.sha256_hex(test_data)
+    py_hash = hashlib.sha256(test_data.encode()).hexdigest()
+    print(f"  Input: {test_data!r}")
+    print(f"  Rust SHA-256:   {rust_hash}")
+    print(f"  Python SHA-256: {py_hash}")
+    print(f"  Match: {rust_hash == py_hash}")
+
+    # Benchmark on larger data
+    big_data = "x" * 10_000_000
+
+    start = time.perf_counter()
+    _rust_h = rust_demo.sha256_hex(big_data)
+    rust_hash_time = time.perf_counter() - start
+
+    start = time.perf_counter()
+    _py_h = hashlib.sha256(big_data.encode()).hexdigest()
+    py_hash_time = time.perf_counter() - start
+
+    print("\n  SHA-256 of 10MB string:")
+    print(f"  Rust:   {rust_hash_time * 1000:>8.3f}ms")
+    print(f"  Python: {py_hash_time * 1000:>8.3f}ms")
+    print("  (Both use compiled C/Rust — similar speed expected)")
+
     print("\n" + "=" * 60)
     print("✅ Demo complete!")
     print("=" * 60)

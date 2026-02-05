@@ -42,6 +42,7 @@ class SessionManager:
                 "last_access": time.time(),
                 "moving_avg": rust_demo.MovingAverage(5),
                 "ring_buffer": rust_demo.RingBuffer(8),
+                "sorted_set": rust_demo.SortedSet(),
             }
         return session_id
 
@@ -125,6 +126,28 @@ def py_sum_list(items: list[int]) -> int:
     return sum(items)
 
 
+def py_prime_sieve(n: int) -> list[int]:
+    if n < 2:
+        return []
+    sieve = [True] * (n + 1)
+    sieve[0] = sieve[1] = False
+    for i in range(2, int(n**0.5) + 1):
+        if sieve[i]:
+            for j in range(i * i, n + 1, i):
+                sieve[j] = False
+    return [i for i, is_p in enumerate(sieve) if is_p]
+
+
+def py_matrix_multiply(a: list[float], b: list[float], n: int) -> list[float]:
+    result = [0.0] * (n * n)
+    for i in range(n):
+        for k in range(n):
+            a_ik = a[i * n + k]
+            for j in range(n):
+                result[i * n + j] += a_ik * b[k * n + j]
+    return result
+
+
 # ============================================================================
 # Request Handler
 # ============================================================================
@@ -200,6 +223,13 @@ class DemoHandler(BaseHTTPRequestHandler):
             "/api/word_freq": self.handle_word_freq,
             "/api/moving_avg": self.handle_moving_avg,
             "/api/ring_buffer": self.handle_ring_buffer,
+            "/api/parallel_sum": self.handle_parallel_sum,
+            "/api/prime_sieve": self.handle_prime_sieve,
+            "/api/matrix_multiply": self.handle_matrix_multiply,
+            "/api/slugify": self.handle_slugify,
+            "/api/extract_emails": self.handle_extract_emails,
+            "/api/sorted_set": self.handle_sorted_set,
+            "/api/sha256": self.handle_sha256,
         }
 
         handler = handlers.get(path)
@@ -385,6 +415,174 @@ class DemoHandler(BaseHTTPRequestHandler):
             )
         else:
             self.send_json({"error": "Unknown action"}, status=400)
+
+    def handle_parallel_sum(self):
+        data = self.read_body()
+        size = min(int(data.get("size", 1_000_000)), 50_000_000)
+        items = list(range(1, size + 1))
+
+        start = time.perf_counter()
+        rust_result = rust_demo.parallel_sum(items)
+        rust_ms = (time.perf_counter() - start) * 1000
+
+        start = time.perf_counter()
+        py_result = sum(items)
+        py_ms = (time.perf_counter() - start) * 1000
+
+        self.send_json(
+            {
+                "size": size,
+                "result": rust_result,
+                "rust_ms": round(rust_ms, 4),
+                "python_ms": round(py_ms, 4),
+                "speedup": round(py_ms / rust_ms, 1) if rust_ms > 0 else 0,
+                "match": rust_result == py_result,
+            }
+        )
+
+    def handle_prime_sieve(self):
+        data = self.read_body()
+        n = min(int(data.get("n", 100_000)), 10_000_000)
+        mode = data.get("mode", "count")
+
+        start = time.perf_counter()
+        if mode == "list":
+            primes = rust_demo.prime_sieve(n)
+            rust_ms = (time.perf_counter() - start) * 1000
+            count = len(primes)
+        else:
+            count = rust_demo.count_primes(n)
+            rust_ms = (time.perf_counter() - start) * 1000
+
+        start = time.perf_counter()
+        py_prime_sieve(n)
+        py_ms = (time.perf_counter() - start) * 1000
+
+        self.send_json(
+            {
+                "n": n,
+                "count": count,
+                "mode": mode,
+                "rust_ms": round(rust_ms, 4),
+                "python_ms": round(py_ms, 4),
+                "speedup": round(py_ms / rust_ms, 1) if rust_ms > 0 else 0,
+            }
+        )
+
+    def handle_matrix_multiply(self):
+        import random
+
+        data = self.read_body()
+        size = min(int(data.get("size", 100)), 500)
+
+        a = [random.random() for _ in range(size * size)]
+        b = [random.random() for _ in range(size * size)]
+
+        start = time.perf_counter()
+        _rust_result = rust_demo.matrix_multiply(a, b, size, size, size)
+        rust_ms = (time.perf_counter() - start) * 1000
+
+        py_ms = None
+        if size <= 150:
+            start = time.perf_counter()
+            _py_result = py_matrix_multiply(a, b, size)
+            py_ms = round((time.perf_counter() - start) * 1000, 4)
+
+        self.send_json(
+            {
+                "size": size,
+                "rust_ms": round(rust_ms, 4),
+                "python_ms": py_ms,
+                "speedup": round(py_ms / rust_ms, 1) if py_ms and rust_ms > 0 else None,
+            }
+        )
+
+    def handle_slugify(self):
+        data = self.read_body()
+        text = data.get("text", "")
+        result = rust_demo.slugify(text)
+        self.send_json({"text": text, "slug": result})
+
+    def handle_extract_emails(self):
+        data = self.read_body()
+        text = data.get("text", "")
+        emails = rust_demo.extract_emails(text)
+        self.send_json({"text": text, "emails": emails, "count": len(emails)})
+
+    def handle_sorted_set(self):
+        data = self.read_body()
+        session_id = data.get("session_id", "")
+        action = data.get("action", "")
+        value = data.get("value", 0)
+
+        session = self.sessions.get_session(session_id)
+        if not session:
+            self.send_json({"error": "Invalid session"}, status=400)
+            return
+
+        ss = session["sorted_set"]
+
+        if action == "insert":
+            inserted = ss.insert(int(value))
+            self.send_json(
+                {
+                    "action": "insert",
+                    "value": int(value),
+                    "inserted": inserted,
+                    "items": ss.to_list(),
+                    "length": len(ss),
+                }
+            )
+        elif action == "remove":
+            removed = ss.remove(int(value))
+            self.send_json(
+                {
+                    "action": "remove",
+                    "value": int(value),
+                    "removed": removed,
+                    "items": ss.to_list(),
+                    "length": len(ss),
+                }
+            )
+        elif action == "contains":
+            found = ss.contains(int(value))
+            self.send_json({"action": "contains", "value": int(value), "found": found})
+        elif action == "range":
+            low = int(data.get("low", 0))
+            high = int(data.get("high", 100))
+            items = ss.range(low, high)
+            self.send_json(
+                {"action": "range", "low": low, "high": high, "items": items}
+            )
+        elif action == "status":
+            self.send_json(
+                {"action": "status", "items": ss.to_list(), "length": len(ss)}
+            )
+        else:
+            self.send_json({"error": "Unknown action"}, status=400)
+
+    def handle_sha256(self):
+        data = self.read_body()
+        text = data.get("text", "")
+        import hashlib
+
+        start = time.perf_counter()
+        rust_hash = rust_demo.sha256_hex(text)
+        rust_ms = (time.perf_counter() - start) * 1000
+
+        start = time.perf_counter()
+        py_hash = hashlib.sha256(text.encode()).hexdigest()
+        py_ms = (time.perf_counter() - start) * 1000
+
+        self.send_json(
+            {
+                "text_length": len(text),
+                "hash": rust_hash,
+                "match": rust_hash == py_hash,
+                "rust_ms": round(rust_ms, 4),
+                "python_ms": round(py_ms, 4),
+            }
+        )
 
 
 # ============================================================================
@@ -845,6 +1043,146 @@ HTML_PAGE = """<!DOCTYPE html>
             </div>
         </section>
 
+        <!-- Parallel Computation -->
+        <section>
+            <h2>Try It: Parallel Computation</h2>
+
+            <div class="card">
+                <h3>Parallel Sum (rayon)</h3>
+                <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">
+                    Rust releases the GIL and uses all CPU cores via rayon
+                </p>
+                <div class="demo-row">
+                    <label>Size:</label>
+                    <select id="par-size">
+                        <option value="1000000">1M</option>
+                        <option value="5000000">5M</option>
+                        <option value="10000000" selected>10M</option>
+                        <option value="25000000">25M</option>
+                    </select>
+                    <button onclick="runParallelSum()">Sum</button>
+                </div>
+                <div id="par-result" class="result" style="display: none;"></div>
+            </div>
+
+            <div class="card">
+                <h3>Prime Sieve</h3>
+                <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">
+                    Sieve of Eratosthenes — compare count_primes (returns int) vs prime_sieve (returns list)
+                </p>
+                <div class="demo-row">
+                    <label>Up to:</label>
+                    <select id="prime-n">
+                        <option value="100000">100K</option>
+                        <option value="500000">500K</option>
+                        <option value="1000000" selected>1M</option>
+                        <option value="5000000">5M</option>
+                    </select>
+                    <select id="prime-mode">
+                        <option value="count">Count only (fast)</option>
+                        <option value="list">Return list (slower)</option>
+                    </select>
+                    <button onclick="runPrimeSieve()">Find Primes</button>
+                </div>
+                <div id="prime-result" class="result" style="display: none;"></div>
+            </div>
+        </section>
+
+        <!-- Matrix Multiply -->
+        <section>
+            <h2>Try It: Matrix Multiplication</h2>
+            <div class="card">
+                <h3>NxN Matrix Multiply</h3>
+                <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">
+                    O(n³) tight loop with cache-friendly i-k-j ordering. Python comparison skipped for sizes > 150.
+                </p>
+                <div class="demo-row">
+                    <label>Size:</label>
+                    <select id="mat-size">
+                        <option value="50">50x50</option>
+                        <option value="100" selected>100x100</option>
+                        <option value="150">150x150</option>
+                        <option value="200">200x200</option>
+                        <option value="300">300x300</option>
+                    </select>
+                    <button onclick="runMatMul()">Multiply</button>
+                </div>
+                <div id="mat-result" class="result" style="display: none;"></div>
+            </div>
+        </section>
+
+        <!-- Text Processing -->
+        <section>
+            <h2>Try It: Text Processing</h2>
+
+            <div class="card">
+                <h3>Slugify</h3>
+                <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">
+                    Convert arbitrary text to a URL-friendly slug
+                </p>
+                <div class="demo-row">
+                    <input type="text" id="slug-text" value="Hello, World! This is a Test." style="flex: 1;">
+                    <button onclick="runSlugify()">Slugify</button>
+                </div>
+                <div id="slug-result" class="result" style="display: none;"></div>
+            </div>
+
+            <div class="card">
+                <h3>Extract Emails</h3>
+                <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">
+                    Find email-like patterns via manual character scanning in Rust
+                </p>
+                <div class="demo-row">
+                    <input type="text" id="email-text" value="Contact hello@example.com or support@rust-lang.org. Not: @nobody or broken@" style="flex: 1;">
+                    <button onclick="runExtractEmails()">Extract</button>
+                </div>
+                <div id="email-result" class="result" style="display: none;"></div>
+            </div>
+        </section>
+
+        <!-- SortedSet -->
+        <section>
+            <h2>Try It: Sorted Set</h2>
+            <div class="card">
+                <h3>SortedSet (binary search backed)</h3>
+                <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">
+                    Python has no built-in sorted set. This Rust class maintains sorted order with O(log n) lookups.
+                </p>
+                <div class="demo-row">
+                    <input type="number" id="ss-value" value="42" style="width: 80px;">
+                    <button onclick="ssAction('insert')">Insert</button>
+                    <button onclick="ssAction('remove')" style="background: #444;">Remove</button>
+                    <button onclick="ssAction('contains')" style="background: var(--python-blue);">Contains?</button>
+                </div>
+                <div class="demo-row">
+                    <label>Range:</label>
+                    <input type="number" id="ss-low" value="10" style="width: 60px;">
+                    <span>to</span>
+                    <input type="number" id="ss-high" value="50" style="width: 60px;">
+                    <button onclick="ssRange()" style="background: var(--python-blue);">Query</button>
+                </div>
+                <div id="ss-result" class="result" style="margin-top: 0.5rem;">
+                    Items: [] | Length: 0
+                </div>
+            </div>
+        </section>
+
+        <!-- SHA-256 -->
+        <section>
+            <h2>Try It: SHA-256</h2>
+            <div class="card">
+                <h3>SHA-256 Hash</h3>
+                <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">
+                    Rust sha2 crate vs Python hashlib — both use compiled native code
+                </p>
+                <div class="demo-row">
+                    <input type="text" id="sha-text" value="Hello, Rust + Python!" style="flex: 1;">
+                    <button onclick="runSha256()">Hash</button>
+                </div>
+                <div id="sha-result" class="result" style="display: none;"></div>
+            </div>
+        </section>
+
         <!-- The Code -->
         <section>
             <h2>The Code</h2>
@@ -1132,6 +1470,141 @@ Positive: [${data.result.join(', ')}]`);
 
             // Increment input for next push
             document.getElementById('rb-value').value = value + 1;
+        }
+
+        // New API calls
+        async function runParallelSum() {
+            const size = parseInt(document.getElementById('par-size').value);
+            showResult('par-result', 'Computing...');
+            const resp = await fetch('/api/parallel_sum', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ size })
+            });
+            const data = await resp.json();
+            showResult('par-result', `Parallel sum of ${data.size.toLocaleString()} integers = ${data.result.toLocaleString()}
+
+Rust (rayon): ${data.rust_ms.toFixed(4)}ms
+Python sum(): ${data.python_ms.toFixed(4)}ms
+Speedup: ${data.speedup}x`);
+        }
+
+        async function runPrimeSieve() {
+            const n = parseInt(document.getElementById('prime-n').value);
+            const mode = document.getElementById('prime-mode').value;
+            showResult('prime-result', 'Computing...');
+            const resp = await fetch('/api/prime_sieve', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ n, mode })
+            });
+            const data = await resp.json();
+            showResult('prime-result', `Primes up to ${data.n.toLocaleString()}: ${data.count.toLocaleString()} found (mode: ${data.mode})
+
+Rust:   ${data.rust_ms.toFixed(4)}ms
+Python: ${data.python_ms.toFixed(4)}ms
+Speedup: ${data.speedup}x`);
+        }
+
+        async function runMatMul() {
+            const size = parseInt(document.getElementById('mat-size').value);
+            showResult('mat-result', `Computing ${size}x${size} matrix multiply...`);
+            const resp = await fetch('/api/matrix_multiply', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ size })
+            });
+            const data = await resp.json();
+            let result = `${data.size}x${data.size} matrix multiply:
+
+Rust: ${data.rust_ms.toFixed(4)}ms`;
+            if (data.python_ms !== null) {
+                result += `
+Python: ${data.python_ms.toFixed(4)}ms
+Speedup: ${data.speedup}x`;
+            } else {
+                result += `
+Python: skipped (too slow for size > 150)`;
+            }
+            showResult('mat-result', result);
+        }
+
+        async function runSlugify() {
+            const text = document.getElementById('slug-text').value;
+            const resp = await fetch('/api/slugify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text })
+            });
+            const data = await resp.json();
+            showResult('slug-result', `Input: "${data.text}"
+Slug:  "${data.slug}"`);
+        }
+
+        async function runExtractEmails() {
+            const text = document.getElementById('email-text').value;
+            const resp = await fetch('/api/extract_emails', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text })
+            });
+            const data = await resp.json();
+            const emailList = data.emails.length > 0
+                ? data.emails.map(e => `  → ${e}`).join('\\n')
+                : '  (none found)';
+            showResult('email-result', `Found ${data.count} email(s):
+${emailList}`);
+        }
+
+        async function ssAction(action) {
+            const value = parseInt(document.getElementById('ss-value').value);
+            const resp = await fetch('/api/sorted_set', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionId, action, value })
+            });
+            const data = await resp.json();
+            if (data.error) {
+                document.getElementById('ss-result').textContent = `Error: ${data.error}`;
+                return;
+            }
+            if (action === 'contains') {
+                document.getElementById('ss-result').textContent =
+                    `contains(${data.value}): ${data.found}`;
+            } else {
+                const verb = action === 'insert' ? (data.inserted ? 'Inserted' : 'Already present') : (data.removed ? 'Removed' : 'Not found');
+                document.getElementById('ss-result').textContent =
+                    `${verb}: ${data.value} | Items: [${data.items.join(', ')}] | Length: ${data.length}`;
+            }
+        }
+
+        async function ssRange() {
+            const low = parseInt(document.getElementById('ss-low').value);
+            const high = parseInt(document.getElementById('ss-high').value);
+            const resp = await fetch('/api/sorted_set', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionId, action: 'range', low, high })
+            });
+            const data = await resp.json();
+            document.getElementById('ss-result').textContent =
+                `range(${data.low}, ${data.high}): [${data.items.join(', ')}]`;
+        }
+
+        async function runSha256() {
+            const text = document.getElementById('sha-text').value;
+            const resp = await fetch('/api/sha256', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text })
+            });
+            const data = await resp.json();
+            showResult('sha-result', `Input: ${data.text_length} chars
+SHA-256: ${data.hash}
+Match (Rust == Python hashlib): ${data.match}
+
+Rust: ${data.rust_ms.toFixed(4)}ms
+Python: ${data.python_ms.toFixed(4)}ms`);
         }
 
         // Initialize
