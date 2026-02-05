@@ -717,6 +717,9 @@ wheels = [
 name = "rust-demo"
 version = "0.1.0"
 source = { editable = "." }
+dependencies = [
+    { name = "fastapi" },
+]
 
 [package.optional-dependencies]
 dev = [
@@ -735,6 +738,7 @@ web = [
 
 [package.metadata]
 requires-dist = [
+    { name = "fastapi", specifier = ">=0.128.1" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.115" },
     { name = "ipython", marker = "extra == 'dev'" },
     { name = "pytest", marker = "extra == 'dev'" },

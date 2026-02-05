@@ -7,6 +7,9 @@ name = "rust_demo"
 version = "0.1.0"
 description = "Demo: Rust extension for Python using PyO3 and Maturin"
 requires-python = ">=3.9"
+dependencies = [
+    "fastapi>=0.128.1",
+]
 
 [project.optional-dependencies]
 dev = ["pytest", "ipython", "ruff"]
